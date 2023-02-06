@@ -64,6 +64,173 @@
 
 ### *<a name="2">Ответ к Заданию 2</a>*
 
+### План аварийного восстановления (Disaster Recovery)
+
+***Раздел 1. Исходная информация.***
+
+1.1. Тип аварийной ситуации - недоступен **Основной сервер**:
+
+```bash 
+makhota@nodeone:~$ hostnamectl
+   Static hostname: nodeone
+         Icon name: computer-vm
+           Chassis: vm
+        Machine ID: d5271009be984d698409bc288664dce0
+           Boot ID: 4264b16590d24eee84d657efd34fe8c0
+    Virtualization: oracle
+  Operating System: Debian GNU/Linux 11 (bullseye)
+            Kernel: Linux 5.10.0-16-686-pae
+      Architecture: x86
+
+makhota@nodeone:~$ lsblk
+NAME   MAJ:MIN RM  SIZE RO TYPE MOUNTPOINT
+sda      8:0    0   20G  0 disk
+├─sda1   8:1    0   19G  0 part /
+├─sda2   8:2    0    1K  0 part 
+└─sda5   8:5    0  975M  0 part [SWAP]
+sdb      8:16   0    2G  0 disk 
+└─sdb1   8:17   0    2G  0 part /home/makhota/Общедоступные
+sr0     11:0    1 58,7M  0 rom
+```
+
+1.2. Настроено резервное копирование основного сервера по типу с помощью `rsync` **Сервер для хранения резервных копий**:
+
+Файл конфигурации на обоих серверах `/etc/rsyncd.conf:
+
+```bash
+pid file = /var/run/rsyncd.pid
+log file = /var/log/rsyncd.log
+transfer logging = true
+munge symlinks = yes
+# папка источник для бэкапа
+[datasda1]
+path = /
+uid = root
+read only = yes
+list = yes
+comment = Data backup Dir
+auth users = backup
+secrets file = /etc/rsyncd.scrt
+[datasdb1]
+path = /home/makhota/Общедоступные
+uid = root
+read only = yes
+list = yes
+comment = Data backup Dir
+auth users = backup
+secrets file = /etc/rsyncd.scrt   
+
+```
+
+Файл `/etc/rsyncd.scrt` на `Основном сервере`:
+
+```bash
+backup:12345
+```
+Файл `/etc/rsyncd.scrt` на `Сервере для хранения резервных копий`:
+
+```bash
+12345
+```
+
+Копирование осуществляется с помощью скрипта `backup-nodeone.sh`
+
+```bash
+#!/bin/bash
+echo "***"
+
+date
+# Папка, куда будем складывать архивы — ее либо сразу создать либо не создавать а положить в уже существующие
+syst_dir=/backup/
+# Имя сервера, который архивируем
+srv_name=nodeone
+# Адрес сервера, который архивируем
+srv_ip=192.168.1.39
+# Пользователь rsync на сервере, который архивируем
+srv_user=backup
+# Ресурс на сервере для бэкапа
+srv_dir1=datasda1
+srv_dir2=datasdb1
+
+
+#Вывод в консоль информации о запуске бекапа
+
+echo "Start backup ${srv_name}"
+# Создаем папку для инкрементных бэкапов
+sudo mkdir -p ${syst_dir}${srv_name}/increment/
+
+# Запускаем копирование sda1
+
+#-a, --archive Эквивалентно набору -rlptgoD. Это быстрый способ указать, что Вам нужна рекурсия 
+# и Вы хотите сохранить почти все. -a не сохраняет жесткие ссылки, для этого отдельно указывать -H.
+#-v, --verbose увеличить уровень подробностей
+
+#-z, --compress С этим параметром rsync сжимает все передаваемые данные файлов.
+#-H, --hard-links Указывает пересоздать жесткие ссылки на конечной стороне в соответствии с тем, что имеется на исходной. Без этого параметра жесткие ссылки обрабат>#-x, --one-file-system Требует не переходить границ файловой системы при рекурсивном копировании. Это полезно при необходимости копирования только одной файловой си>#-S, --sparse Пытаться эффективнее обработать фрагментацию файлов, чтобы сэкономить пространство на приемной стороне.
+#--delete Удалять любые файлы на приемной стороне, которых нет на передающей
+
+#--password-file Позволяет Вам предоставить пароль для доступа к rsync-серверу, сохранив его в файле.
+
+#-b, --backup создавать резервную копию (см. --suffix и --backup-dir)
+# --backup-dir создавать резервную копию в этом каталоге
+
+/usr/bin/rsync -aHAXSz --progress --delete --password-file=/etc/rsyncd.scrt --rsync-path="sudo rsync" \
+--exclude={"/dev/*","/proc/*","/sys/*","/tmp/*","/run/*","/mnt/*","/media/*","/lost+found","/etc/fstab","/etc/udev/rules.d/*","/etc/network/*","/lib/modprobe.d/*", "/home/makhota/Общедоступные/*"} \${srv_user}@${srv_ip}::${srv_dir1} ${syst_dir}${srv_name}/current/sda1/ --backup \
+--backup-dir=${syst_dir}${srv_name}/increment/sda1/`date +%Y-%m-%d`/
+
+# Запускаем копирование sdb1
+
+/usr/bin/rsync -aHAXSz --progress --delete --password-file=/etc/rsyncd.scrt --rsync-path="sudo rsync" \
+--exclude={"/dev/*","/proc/*","/sys/*","/tmp/*","/run/*","/mnt/*","/media/*","/lost+found","/etc/fstab","/etc/udev/rules.d/*","/etc/network/*","/lib/modprobe.d/*"} \${srv_user}@${srv_ip}::${srv_dir2} ${syst_dir}${srv_name}/current/sdb1/ --backup \
+--backup-dir=${syst_dir}${srv_name}/increment/sdb1/`date +%Y-%m-%d`/
+
+#Найти и удалить файлы старше 30 дней
+
+# -type — тип искомого: f=файл, d=каталог, l=ссылка (link).
+# -mtime — время последнего изменения файла.
+# -exec command {} \; — выполняет над найденным файлом указанную команду; обратите внимание на синтаксис.
+
+# -maxdepth 1 ограничить глубину поиска значением «1». 
+#Так вы ограничитесь поиском в текущей папке, не залезая в подпапки.
+
+
+/usr/bin/find ${syst_dir}${srv_name}/increment/ -maxdepth 1 -type d -mtime +30 -exec rm -rf {} \;
+
+#Вывести дату в консоль
+
+date
+
+#Вывести в консоль информацию о завершении бекапа на конкретной машине
+echo "Finish backup ${srv_name} ip ${srv_ip}"
+echo "***"
+```
+
+Копирование осуществляется ежедневно шедулером, поскольку данные критичны 24 часа, а на восстановление сервера требуется от 2 до 4 часов, то резервное копирование осуществляется два раза в день в нерабочее время в 21:01 и 6:01, в файл `/etc/crontab` добавлены строки:
+
+```bash
+
+01 21 * * * root /root/scripts/backup-nodeone.sh 2>&1 >> /home/makhota/rsync-recovery/logrsync-nodeone.txt
+01 06 * * * root /root/scripts/backup-nodeone.sh 2>&1 >> /home/makhota/rsync-recovery/logrsync-nodeone.txt
+
+```
+
+1.3. Вналичии установочный файл `debian-11.6.0-i386-netinst.iso`
+
+
+***Раздел 2. Ответственное за аварийное восстановление лицо.***
+
+Махота Елена 
+Телефон +7000000000
+e-mail: help@server.ru
+
+***Раздел 3. Сроки аварийного восстановления.***
+От 2 до 4 часов
+
+***Раздел 4. Порядок аварийного восстановления.***
+
+4.1. Устновка системы `debian-11.6.0-i386-netinst.iso`
+
+4.2.
 
 ---
 
