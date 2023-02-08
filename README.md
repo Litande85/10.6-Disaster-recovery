@@ -1,8 +1,7 @@
 # Домашнее задание к занятию 10.6 «Disaster recovery» -  `Елена Махота`
 
 - [Ответ к Заданию 1](#1)
-- [Ответ к Заданию 2](#2)
-- [Ответ к Заданию 3*](#3)
+- [Ответ к Заданиям 2 - 3*](#2)
 
 ---
 
@@ -62,7 +61,15 @@
  
 *Приведите ответ в форме плана востановления с выбранным механизмом и получившейся топологией.*
 
-### *<a name="2">Ответ к Заданию 2</a>*
+
+### Задание 3*
+
+Используя программу R-sync, составьте конфигурацию для выполнения прошлой задачи.
+
+*Пришлите файл конфигурации.*
+
+
+### *<a name="2">Ответ к Заданиям 2 - 3*</a>*
 
 ### План аварийного восстановления (Disaster Recovery)
 
@@ -88,12 +95,12 @@ sda      8:0    0   20G  0 disk
 ├─sda1   8:1    0   19G  0 part /
 ├─sda2   8:2    0    1K  0 part 
 └─sda5   8:5    0  975M  0 part [SWAP]
-sdb      8:16   0    2G  0 disk 
-└─sdb1   8:17   0    2G  0 part /home/makhota/Общедоступные
+sdb      8:16   0    256G  0 disk 
+└─sdb1   8:17   0    256G  0 part /home/makhota/Общедоступные
 sr0     11:0    1 58,7M  0 rom
 ```
 
-1.2. Настроено резервное копирование основного сервера по типу с помощью `rsync` **Сервер для хранения резервных копий**:
+1.2. Настроено резервное копирование основного сервера по типу с помощью `rsync` на **Сервер для хранения резервных копий** 10 терабайт места:
 
 Файл конфигурации на обоих серверах `/etc/rsyncd.conf:
 
@@ -214,8 +221,6 @@ echo "***"
 
 ```
 
-1.3. Вналичии установочный файл `debian-11.6.0-i386-netinst.iso`
-
 
 ***Раздел 2. Ответственное за аварийное восстановление лицо.***
 
@@ -224,25 +229,135 @@ echo "***"
 e-mail: help@server.ru
 
 ***Раздел 3. Сроки аварийного восстановления.***
-От 2 до 4 часов
+От 2 до 4 часов на перенос данных Основного сервера на временный сервер/
+Максимальный срок на восстановление от момента последней резервной копии - не более 24 часов.
 
-***Раздел 4. Порядок аварийного восстановления.***
+***Раздел 4. Порядок аварийного восстановления на новый временный сервер в облаке.***
 
-4.1. Устновка системы `debian-11.6.0-i386-netinst.iso`
+4.1. До устранения неполадок или замены Основного сервера будет использоваться машина в облаке Yandex Cloud c Debian 10
 
-4.2.
+```
+Имя nodeone
+Дата создания 08.02.2023, в 21:02
+Внутренний FQDN nodeone.ru-central1.internal
+Зона доступности ru-central1-a
+Сервисный аккаунт makhota2
+Ресурсы 
+латформа Intel Ice Lake
+Гарантированная доля vCPU 100%
+vCPU 2
+RAM 4 ГБ
+Объём дискового пространства 20 ГБ
+Объём дополнительного дискового пространства 256 ГБ
+Прерываемая да
+Сеть Сетевой интерфейс
+Внутренний IPv4 10.128.0.10
+Публичный IPv4 51.250.93.48
 
----
+```
 
-# Задания со звёздочкой*
 
-Эти задания дополнительные. Их выполнять не обязательно. На зачёт это не повлияет. Вы можете их выполнить, если хотите глубже разобраться в материале.
- 
+4.2. Создать точку монтирования на каждый раздел на новом временном сервере
 
-### Задание 3*
+```bash
+sudo mkdir -p /mnt/new_server/sda1
+sudo mkdir -p /mnt/new_server/sdb1
 
-Используя программу R-sync, составьте конфигурацию для выполнения прошлой задачи.
+sudo mount /dev/vda2 /mnt/new_server/sda1
+sudo mount /dev/vdb1 /mnt/new_server/sda1
 
-*Пришлите файл конфигурации.*
+makhota@nodeone:~$ lsblk
+NAME   MAJ:MIN RM SIZE RO TYPE MOUNTPOINT
+vda    254:0    0  30G  0 disk
+├─vda1 254:1    0   1M  0 part
+└─vda2 254:2    0  30G  0 part /mnt/new_server/sda1
+vdb    254:16   0   260G  0 disk
+└─vdb1 254:17   0   260G  0 part /mnt/new_server/sdb1
+```
 
-### *<a name="3">Ответ к Заданию 3*</a>*
+4.3. Скопировать резервную копию на новый временный сервер
+
+```
+rsync -aHAXSz --delete --info=progress2 --numeric-ids -e "ssh" --rsync-path="sudo rsync" --exclude={"/dev/*","/proc/*","/sys/*","/tmp/*","/run/*","/mnt/*","/media/*","/lost+found","/etc/fstab","/etc/udev/rules.d/*","/etc/network/*","/lib/modprobe.d/*"} YOUR_USERNAME@IP_Сервера_для_хранения_резервных копий:/backup/nodeone/current/sda1/ /new_server/sda1
+
+rsync -aHAXSz --delete --info=progress2 --numeric-ids -e "ssh" --rsync-path="sudo rsync" --exclude={"/dev/*","/proc/*","/sys/*","/tmp/*","/run/*","/mnt/*","/media/*","/lost+found","/etc/fstab","/etc/udev/rules.d/*","/etc/network/*","/lib/modprobe.d/*"} YOUR_USERNAME@IP_Сервера_для_хранения_резервных копий:/backup/nodeone/current/sdb1/ /new_server/sdb1
+```
+или если машина за натом, можно использовать `scp`.
+
+4.5. Настроить резервное копирование на **Сервер для хранения резервных копий** с нового временного сервера.
+
+
+***Раздел 5. Порядок переноса сервера с временного на восстановленный Основной сервер.***
+
+После устранения неполадок либо покупки нового **Основного сервера** выполнить:
+
+5.1. Подготовка временного сервера к переносу на **Основной сервер**
+5.1.1. Сохранить образ диска.
+5.1.2. Создаем точку монтирования для каждого раздела
+```bash
+sudo mount -o ro /dev/vda2 /mnt/new_server/sda1
+sudo mount -o ro /dev/vdb1 /mnt/new_server/sdb1
+```
+
+Примечание: монтаж только для чтения, чтобы предотвратить стирание вещей по ошибке.
+
+5.1.3. Внести правки в файл
+`nano /etc/sudoers`
+Добавить в конце файла (заменить YOUR_USERNAME локальным именем пользователя):
+YOUR_USERNAME ALL= NOPASSWD:/usr/bin/rsync
+Это позволит запустить rsync от root через ssh позже.
+
+5.2. Подготовка нового **Основного сервера**
+5.2.1. Установить Debian 10, разметить диски, разделы.
+5.2.2. Запустить новый сервер в режиме восстановления.
+5.2.3. Проверить соединение ssh с новым Основным сервером (в режиме аварийного восстановления)
+5.2.4. Создаем точки монтирования
+sudo su
+```bash
+sudo mkdir -p /mnt/new_server/sda1
+sudo mkdir -p /mnt/new_server/sdb1
+
+sudo mount /dev/sda1 /mnt/new_server/sda1
+sudo mount /dev/sdb1 /mnt/new_server/sda1
+```
+
+5.2.5. Копируем файлы.
+```bash
+rsync -aHAXSz --delete --info=progress2 --numeric-ids -e "ssh" --rsync-path="sudo rsync" --exclude={"/dev/*","/proc/*","/sys/*","/tmp/*","/run/*","/mnt/*","/media/*","/lost+found","/etc/fstab","/etc/udev/rules.d/*","/etc/network/*","/lib/modprobe.d/*"} YOUR_USERNAME@YOUR_OLD_SERVER_IP:/mnt/new_server/sda1/ /mnt/new_server/sda1/
+
+rsync -aHAXSz --delete --info=progress2 --numeric-ids -e "ssh" --rsync-path="sudo rsync" --exclude={"/dev/*","/proc/*","/sys/*","/tmp/*","/run/*","/mnt/*","/media/*","/lost+found","/etc/fstab","/etc/udev/rules.d/*","/etc/network/*","/lib/modprobe.d/*"} YOUR_USERNAME@YOUR_OLD_SERVER_IP:/mnt/new_server/sda1/ /mnt/new_server/sda1/
+```
+
+5.2.6. Настроить новый Основной сервер.
+5.2.6.1. Заменить сетевой интерфейс
+5.2.6.2. Отредактировать файл.
+`nano /mnt/new_server/sda1/etc/hosts`
+Если IP-адрес старого сервера присутствует в файле, замените его IP-адресом нового сервера.
+
+5.2.7. Установить grub на новый сервер
+
+```bash
+mount --bind /proc /mnt/new_server/proc
+mount --bind /sys /mnt/new_server/sys
+mount --bind /dev /mnt/new_server/dev
+mount --bind /run /mnt/new_server/run
+chroot /mnt/new_server
+grub-install /dev/sda
+update-grub
+
+5.2.8. Перезагрузить новый Основной сервер и протестировать.
+5.2.9. Проверить журналы, чтобы увидеть, все ли в порядке `/var/log/syslog`
+
+
+
+
+
+Использованные источники:
+
+- https://www.man42.net/blog/2017/07/how-to-migrate-a-debian-server/
+
+- https://www.man42.net/blog/2017/07/how-to-migrate-a-debian-server/
+
+- https://habr.com/ru/company/ruvds/blog/523570/
+
+- https://habr.com/ru/company/servermall/blog/655127/ 
